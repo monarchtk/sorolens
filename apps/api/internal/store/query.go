@@ -97,6 +97,26 @@ type ContractStats struct {
 	WindowDuration        string
 }
 
+// InvocationWindowStats aggregates invocation outcomes and resource usage for
+// one time window. Fee is in stroops and CPU is in instructions.
+type InvocationWindowStats struct {
+	InvocationCount   int64
+	FailedInvocations int64
+	FailureRate       float64
+	AvgFee            float64
+	P95Fee            float64
+	AvgCPU            float64
+	P95CPU            float64
+}
+
+// ContractInvocationStats contains the fixed windows exposed by the contract
+// invocation stats endpoint.
+type ContractInvocationStats struct {
+	Last24Hours InvocationWindowStats
+	Last7Days   InvocationWindowStats
+	Last30Days  InvocationWindowStats
+}
+
 // HourlyActivity holds one hour bucket of contract activity (hour start, UTC).
 // It backs the indexer's anomaly detector window (issue #136).
 type HourlyActivity struct {
@@ -139,6 +159,7 @@ type QueryStore interface {
 	ListAllInvocations(ctx context.Context, cursorLedger uint32, cursorTxHash string, limit int, f InvocationFilters) ([]Invocation, uint32, string, error)
 	ListStorageEntries(ctx context.Context, contractID, cursor string, limit int, f StorageFilters) ([]StorageEntry, string, error)
 	GetContractStats(ctx context.Context, contractID, window string) (ContractStats, error)
+	GetContractInvocationStats(ctx context.Context, contractID string) (ContractInvocationStats, error)
 	RecentEvents(ctx context.Context, contractID string, limit int) ([]Event, error)
 	// RecentInvocations returns the most recent invocations for a contract,
 	// newest first, capped at limit. Like RecentEvents it backs single-call
@@ -719,6 +740,64 @@ func (s *postgresStore) GetContractStats(ctx context.Context, contractID, window
 		cs.WindowDuration = "24h"
 	}
 	return cs, err
+}
+
+// GetContractInvocationStats calculates all three dashboard windows in one
+// aggregate query, scanning at most the contract's most recent 30 days.
+func (s *postgresStore) GetContractInvocationStats(ctx context.Context, contractID string) (ContractInvocationStats, error) {
+	const query = `
+		SELECT
+			COUNT(*) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '24 hours'),
+			COUNT(*) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '24 hours' AND status <> 'SUCCESS'),
+			COALESCE(
+				COUNT(*) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '24 hours' AND status <> 'SUCCESS')::float8 /
+				NULLIF(COUNT(*) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '24 hours'), 0), 0
+			),
+			COALESCE(AVG(resource_fee_charged) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '24 hours'), 0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY resource_fee_charged::float8)
+				FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '24 hours'), 0)::float8,
+			COALESCE(AVG(cpu_insn) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '24 hours'), 0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY cpu_insn::float8)
+				FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '24 hours'), 0)::float8,
+
+			COUNT(*) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '7 days'),
+			COUNT(*) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '7 days' AND status <> 'SUCCESS'),
+			COALESCE(
+				COUNT(*) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '7 days' AND status <> 'SUCCESS')::float8 /
+				NULLIF(COUNT(*) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '7 days'), 0), 0
+			),
+			COALESCE(AVG(resource_fee_charged) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '7 days'), 0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY resource_fee_charged::float8)
+				FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '7 days'), 0)::float8,
+			COALESCE(AVG(cpu_insn) FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '7 days'), 0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY cpu_insn::float8)
+				FILTER (WHERE ledger_closed_at >= NOW() - INTERVAL '7 days'), 0)::float8,
+
+			COUNT(*),
+			COUNT(*) FILTER (WHERE status <> 'SUCCESS'),
+			COALESCE(COUNT(*) FILTER (WHERE status <> 'SUCCESS')::float8 / NULLIF(COUNT(*), 0), 0),
+			COALESCE(AVG(resource_fee_charged), 0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY resource_fee_charged::float8), 0)::float8,
+			COALESCE(AVG(cpu_insn), 0)::float8,
+			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY cpu_insn::float8), 0)::float8
+		FROM invocations
+		WHERE contract_id = $1
+		  AND ledger_closed_at >= NOW() - INTERVAL '30 days'
+		  AND ledger_closed_at <= NOW()`
+
+	var stats ContractInvocationStats
+	err := s.pool.QueryRow(ctx, query, contractID).Scan(
+		&stats.Last24Hours.InvocationCount, &stats.Last24Hours.FailedInvocations, &stats.Last24Hours.FailureRate,
+		&stats.Last24Hours.AvgFee, &stats.Last24Hours.P95Fee, &stats.Last24Hours.AvgCPU, &stats.Last24Hours.P95CPU,
+		&stats.Last7Days.InvocationCount, &stats.Last7Days.FailedInvocations, &stats.Last7Days.FailureRate,
+		&stats.Last7Days.AvgFee, &stats.Last7Days.P95Fee, &stats.Last7Days.AvgCPU, &stats.Last7Days.P95CPU,
+		&stats.Last30Days.InvocationCount, &stats.Last30Days.FailedInvocations, &stats.Last30Days.FailureRate,
+		&stats.Last30Days.AvgFee, &stats.Last30Days.P95Fee, &stats.Last30Days.AvgCPU, &stats.Last30Days.P95CPU,
+	)
+	if err != nil {
+		return ContractInvocationStats{}, fmt.Errorf("contract invocation stats: %w", err)
+	}
+	return stats, err
 }
 
 // DailyAggregates queries the last `days` calendar days (oldest first),

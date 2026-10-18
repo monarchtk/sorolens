@@ -973,6 +973,25 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/contracts/{id}/invocations/stats:
+    get:
+      tags: [Invocations]
+      summary: Aggregate invocation outcomes and resource usage for a contract
+      operationId: getContractInvocationStats
+      security:
+        - ApiKeyAuth: [read:contracts]
+      parameters:
+        - $ref: "#/components/parameters/ContractID"
+      responses:
+        "200":
+          description: Invocation statistics for the last 24 hours, 7 days, and 30 days
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractInvocationStats"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/contracts/{id}/storage:
     get:
       tags: [Storage]
@@ -5310,6 +5329,50 @@ components:
           format: int64
         window_duration:
           type: string
+
+    ContractInvocationStats:
+      type: object
+      required: [windows]
+      properties:
+        windows:
+          type: object
+          required: ["24h", "7d", "30d"]
+          properties:
+            "24h":
+              $ref: "#/components/schemas/InvocationWindowStats"
+            "7d":
+              $ref: "#/components/schemas/InvocationWindowStats"
+            "30d":
+              $ref: "#/components/schemas/InvocationWindowStats"
+
+    InvocationWindowStats:
+      type: object
+      description: Fees are measured in stroops, CPU in instructions, and failure_rate is a ratio from 0 to 1.
+      required: [invocation_count, failed_invocations, failure_rate, avg_fee, p95_fee, avg_cpu, p95_cpu]
+      properties:
+        invocation_count:
+          type: integer
+          format: int64
+        failed_invocations:
+          type: integer
+          format: int64
+        failure_rate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        avg_fee:
+          type: number
+          format: double
+        p95_fee:
+          type: number
+          format: double
+        avg_cpu:
+          type: number
+          format: double
+        p95_cpu:
+          type: number
+          format: double
 
     ForecastPoint:
       type: object

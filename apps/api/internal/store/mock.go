@@ -51,29 +51,30 @@ type MockStore struct {
 	auditEvents []AuditEvent
 
 	// Error injection
-	UpsertContractErr           error
-	GetContractErr              error
-	ListContractsErr            error
-	DeleteContractsErr          error
-	SetContractLabelErr         error
-	GetGlobalStatsErr           error
-	ListEventsErr               error
-	ListInvocationsErr          error
-	GetInvocationErr            error
-	GetCallEdgesErr             error
-	ListStorageErr              error
-	GetContractStatsErr         error
-	RecentEventsErr             error
-	RecentInvocationsErr        error
-	CreateAPIKeyErr             error
-	GetAPIKeyErr                error
-	UpsertUserErr               error
-	GetUserErr                  error
-	ListUpgradesErr             error
-	GetHealthScoreErr           error
-	RecordContractVersionErr    error
-	ListContractVersionsErr     error
-	GetLatestContractVersionErr error
+	UpsertContractErr             error
+	GetContractErr                error
+	ListContractsErr              error
+	DeleteContractsErr            error
+	SetContractLabelErr           error
+	GetGlobalStatsErr             error
+	ListEventsErr                 error
+	ListInvocationsErr            error
+	GetInvocationErr              error
+	GetCallEdgesErr               error
+	ListStorageErr                error
+	GetContractStatsErr           error
+	GetContractInvocationStatsErr error
+	RecentEventsErr               error
+	RecentInvocationsErr          error
+	CreateAPIKeyErr               error
+	GetAPIKeyErr                  error
+	UpsertUserErr                 error
+	GetUserErr                    error
+	ListUpgradesErr               error
+	GetHealthScoreErr             error
+	RecordContractVersionErr      error
+	ListContractVersionsErr       error
+	GetLatestContractVersionErr   error
 
 	UpsertVerificationErr error
 	GetVerificationErr    error
@@ -654,6 +655,69 @@ func (m *MockStore) ListStorageEntries(_ context.Context, contractID, cursor str
 		out = out[:limit]
 	}
 	return out, nextCursor, nil
+}
+
+func (m *MockStore) GetContractInvocationStats(_ context.Context, contractID string) (ContractInvocationStats, error) {
+	if m.GetContractInvocationStatsErr != nil {
+		return ContractInvocationStats{}, m.GetContractInvocationStatsErr
+	}
+
+	now := time.Now()
+	cutoffs := []time.Time{now.Add(-24 * time.Hour), now.Add(-7 * 24 * time.Hour), now.Add(-30 * 24 * time.Hour)}
+	values := [3][]Invocation{}
+	for _, inv := range m.invocations {
+		if inv.ContractID != contractID || inv.LedgerClosedAt.Before(cutoffs[2]) || inv.LedgerClosedAt.After(now) {
+			continue
+		}
+		for i, cutoff := range cutoffs {
+			if !inv.LedgerClosedAt.Before(cutoff) {
+				values[i] = append(values[i], inv)
+			}
+		}
+	}
+	return ContractInvocationStats{
+		Last24Hours: invocationWindowStats(values[0]),
+		Last7Days:   invocationWindowStats(values[1]),
+		Last30Days:  invocationWindowStats(values[2]),
+	}, nil
+}
+
+func invocationWindowStats(invocations []Invocation) InvocationWindowStats {
+	stats := InvocationWindowStats{InvocationCount: int64(len(invocations))}
+	fees := make([]float64, 0, len(invocations))
+	cpus := make([]float64, 0, len(invocations))
+	for _, inv := range invocations {
+		if inv.Status != "SUCCESS" {
+			stats.FailedInvocations++
+		}
+		fees = append(fees, float64(inv.ResourceFeeCharged))
+		cpus = append(cpus, float64(inv.CPUInsn))
+		stats.AvgFee += float64(inv.ResourceFeeCharged)
+		stats.AvgCPU += float64(inv.CPUInsn)
+	}
+	if stats.InvocationCount > 0 {
+		stats.FailureRate = float64(stats.FailedInvocations) / float64(stats.InvocationCount)
+		stats.AvgFee /= float64(stats.InvocationCount)
+		stats.AvgCPU /= float64(stats.InvocationCount)
+		stats.P95Fee = percentile95(fees)
+		stats.P95CPU = percentile95(cpus)
+	}
+	return stats
+}
+
+func percentile95(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sort.Float64s(values)
+	position := float64(len(values)-1) * 0.95
+	lower := int(position)
+	upper := lower + 1
+	if upper >= len(values) {
+		return values[lower]
+	}
+	fraction := position - float64(lower)
+	return values[lower] + (values[upper]-values[lower])*fraction
 }
 
 func (m *MockStore) GetContractStats(_ context.Context, contractID, window string) (ContractStats, error) {

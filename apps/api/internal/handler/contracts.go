@@ -113,6 +113,20 @@ type contractStatsResponse struct {
 	WindowDuration        string `json:"window_duration"`
 }
 
+type invocationWindowStatsResponse struct {
+	InvocationCount   int64   `json:"invocation_count"`
+	FailedInvocations int64   `json:"failed_invocations"`
+	FailureRate       float64 `json:"failure_rate"`
+	AvgFee            float64 `json:"avg_fee"`
+	P95Fee            float64 `json:"p95_fee"`
+	AvgCPU            float64 `json:"avg_cpu"`
+	P95CPU            float64 `json:"p95_cpu"`
+}
+
+type contractInvocationStatsResponse struct {
+	Windows map[string]invocationWindowStatsResponse `json:"windows"`
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 func encodeCursor(raw string) string {
@@ -319,8 +333,8 @@ type registerRequest struct {
 // cli/internal/presets.BuiltInPresets but lives here so the API can validate
 // without importing the CLI package.
 var validPresets = map[string]bool{
-	"dex":       true,
-	"lending":   true,
+	"dex":        true,
+	"lending":    true,
 	"stablecoin": true,
 }
 
@@ -349,12 +363,12 @@ func (h *Handler) RegisterContract(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := store.Contract{
-		ID:              req.ID,
-		Network:         req.Network,
-		Label:           req.Label,
-		TrackingPreset:  req.Preset,
-		Status:          "pending",
-		AddedAt:         time.Now().UTC(),
+		ID:             req.ID,
+		Network:        req.Network,
+		Label:          req.Label,
+		TrackingPreset: req.Preset,
+		Status:         "pending",
+		AddedAt:        time.Now().UTC(),
 	}
 	if err := h.Store.UpsertContract(r.Context(), c); err != nil {
 		h.Logger.Error("upsert contract", "err", err)
@@ -597,6 +611,37 @@ func (h *Handler) ListInvocations(w http.ResponseWriter, r *http.Request) {
 		"invocations": resp,
 		"next_cursor": encodeCursor(nextRaw),
 	})
+}
+
+// ContractInvocationStats handles GET /api/v1/contracts/{id}/invocations/stats.
+func (h *Handler) ContractInvocationStats(w http.ResponseWriter, r *http.Request) {
+	contractID := chi.URLParam(r, "id")
+	stats, err := h.Store.GetContractInvocationStats(r.Context(), contractID)
+	if err != nil {
+		h.Logger.Error("get contract invocation stats", "err", err, "contract_id", contractID)
+		writeError(w, r, http.StatusInternalServerError, CodeInternal, "failed to fetch invocation stats")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, contractInvocationStatsResponse{
+		Windows: map[string]invocationWindowStatsResponse{
+			"24h": invocationWindowStatsFromStore(stats.Last24Hours),
+			"7d":  invocationWindowStatsFromStore(stats.Last7Days),
+			"30d": invocationWindowStatsFromStore(stats.Last30Days),
+		},
+	})
+}
+
+func invocationWindowStatsFromStore(stats store.InvocationWindowStats) invocationWindowStatsResponse {
+	return invocationWindowStatsResponse{
+		InvocationCount:   stats.InvocationCount,
+		FailedInvocations: stats.FailedInvocations,
+		FailureRate:       stats.FailureRate,
+		AvgFee:            stats.AvgFee,
+		P95Fee:            stats.P95Fee,
+		AvgCPU:            stats.AvgCPU,
+		P95CPU:            stats.P95CPU,
+	}
 }
 
 // ---- global invocations -----------------------------------------------------
