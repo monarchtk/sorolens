@@ -161,7 +161,11 @@ function SearchResults({ query }: { query: string }) {
       <Section title="Contracts">
         {contractsError && <ErrorMessage message={contractsError} />}
         {!contractsError && contractsLoading && (
-          <p role="status" aria-busy="true" className="text-sm text-[var(--color-text-secondary)]">
+          <p
+            role="status"
+            aria-busy="true"
+            className="text-sm text-[var(--color-text-secondary)]"
+          >
             Searching...
           </p>
         )}

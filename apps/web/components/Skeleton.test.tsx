@@ -10,11 +10,14 @@ describe("loading skeleton accessibility", () => {
     ["card", CardSkeleton],
     ["chart", ChartSkeleton],
     ["table", TableSkeleton],
-  ] as const)("announces the %s as a busy status", (kind, SkeletonComponent) => {
-    render(<SkeletonComponent />);
+  ] as const)(
+    "announces the %s as a busy status",
+    (kind, SkeletonComponent) => {
+      render(<SkeletonComponent />);
 
-    const status = screen.getByRole("status", { name: `Loading ${kind}` });
-    expect(status).toHaveAttribute("aria-busy", "true");
-    expect(status.querySelector('[aria-hidden="true"]')).toBeInTheDocument();
-  });
+      const status = screen.getByRole("status", { name: `Loading ${kind}` });
+      expect(status).toHaveAttribute("aria-busy", "true");
+      expect(status.querySelector('[aria-hidden="true"]')).toBeInTheDocument();
+    }
+  );
 });
