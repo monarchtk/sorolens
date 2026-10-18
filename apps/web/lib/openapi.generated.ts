@@ -538,6 +538,23 @@ export const generatedOpenApiDocument: OpenAPIDocument = {
         ],
       },
     },
+    "/api/v1/contracts/{id}/invocations/stats": {
+      get: {
+        operationId: "getContractInvocationStats",
+        summary:
+          "Aggregate invocation outcomes and resource usage for a contract",
+        tags: ["Invocations"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "Contract ID (starts with C).",
+            type: "string",
+          },
+        ],
+      },
+    },
     "/api/v1/contracts/{id}/invocations/{tx_hash}": {
       get: {
         operationId: "getContractInvocation",
