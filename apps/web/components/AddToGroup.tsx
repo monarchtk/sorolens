@@ -111,7 +111,7 @@ export function AddToGroup({ contractId }: { contractId: string }) {
             </div>
 
             {loading && (
-              <p className="text-sm text-[var(--color-text-secondary)]">
+              <p role="status" aria-busy="true" className="text-sm text-[var(--color-text-secondary)]">
                 Loading groups…
               </p>
             )}
